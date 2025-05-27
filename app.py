@@ -46,8 +46,9 @@ GENINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.
 HEADERS = {"Content-Type": "application/json"}
 
 # Telegram Bot setup
-TELEGRAM_BOT_TOKEN = "7627792094:AAFGr_KxbimGv4qHzh86bDxCGWPhCgw9wbI"
-TELEGRAM_CHANNEL = "@TheWatchDraft"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")
+
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # SQLite setup
