@@ -59,7 +59,7 @@ def initialize_database():
     for attempt in range(max_retries):
         try:
             # Ensure the directory for DB_PATH exists
-            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+            os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else '.', exist_ok=True)
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute("""
@@ -243,7 +243,7 @@ def get_existing_data():
         app.logger.error(f"Error fetching existing data: {e}")
         # If table doesn't exist, attempt to initialize database
         if "no such table" in str(e).lower():
-            app.logger.info("Attempting to initialize database due to missing table.")
+            app.logger.info("AttemptাবিAttempting to initialize database due to missing table.")
             if initialize_database():
                 app.logger.info("Database initialized successfully.")
                 return {'titles': set(), 'contents': set()}
@@ -338,7 +338,7 @@ def generate_unique_post():
                 "content": cleaned_content,
                 "category": category
             }
-            response = supabase.table('blogs').insert(new_post).execute()
+            response = supabase.table('tables').insert(new_post).execute()
             inserted_post = response.data[0]
             insert_blog_to_db(inserted_post)
             USED_TOPICS.add(topic)
@@ -362,11 +362,17 @@ def keep_alive():
     """Keep server alive."""
     while True:
         try:
-            requests.get("https://telegram-yvmd.onrender.com/ping")
-            app.logger.info("Keep-alive ping.")
+            response = requests.get("https://telegram-yvmd.onrender.com/ping", timeout=10)
+            app.logger.info(f"Keep-alive ping, status: {response.status_code}")
         except Exception as e:
             app.logger.error(f"keep_alive error: {e}")
         time.sleep(300)
+
+@app.route('/ping')
+def ping():
+    """Handle keep-alive pings."""
+    app.logger.info("Received ping request.")
+    return jsonify({"status": "alive"}), 200
 
 @app.route('/generate', methods=['GET', 'POST'])
 def manual_generate():
