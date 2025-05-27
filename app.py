@@ -185,7 +185,7 @@ def generate_dynamic_topic():
 
 def clean_content(content):
     """Remove markdown symbols from content to ensure plain text."""
-    if notやる content:
+    if not content:
         return content
     content = re.sub(r'\*\*([^*]+)\*\*', r'\1', content)
     content = re.sub(r'\*([^*]+)\*', r'\1', content)
