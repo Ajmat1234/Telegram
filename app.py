@@ -45,9 +45,9 @@ if not GEMINI_API_KEY:
 GENINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 HEADERS = {"Content-Type": "application/json"}
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")
-
+# Telegram Bot setup
+TELEGRAM_BOT_TOKEN = "7627792094:AAFGr_KxbimGv4qHzh86bDxCGWPhCgw9wbI"
+TELEGRAM_CHANNEL = "https://t.me/TheWatchDraft"
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # SQLite setup
@@ -58,6 +58,8 @@ def initialize_database():
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            # Ensure the directory for DB_PATH exists
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute("""
@@ -156,46 +158,25 @@ def insert_blog_to_db(blog):
 
 # Content topics for movies, anime, and adventure
 CONTENT_TOPICS = [
-    {"topic": "ड्रैगन बॉल Z में सबसे ताकतवर किरदार कौन है?", "category": "Anime"},
-    {"topic": "अवतार: द लास्ट एयरबेंडर - क्या हुआ अगर आंग ने ओजाई को हराया नहीं होता?", "category": "Anime"},
-    {"topic": "मार्वल की नई फिल्म 'एवेंजर्स: सीक्रेट वॉर्स' की समीक्षा", "category": "Movie"},
-    {"topic": "जुरासिक पार्क: अगर डायनासोर वास्तव में बच गए होते तो क्या होता?", "category": "Adventure"},
-    {"topic": "नारुतो बनाम सासुके: कौन है असली निंजा?", "category": "Anime"},
-    {"topic": "इंडियाना जोन्स की नई साहसिक कहानी की समीक्षा", "category": "Adventure"},
-    {"topic": "वन पीस में लफी की ताकत का विश्लेषण", "category": "Anime"},
-    {"topic": "द लायन किंग (2025 रीमेक): क्या यह क्लासिक से बेहतर है?", "category": "Movie"},
-    {"topic": "अगर हैरी पॉटर में वोल्डेमॉर्ट जीत जाता तो क्या होता?", "category": "Adventure"},
-    {"topic": "टोक्यो घoul: कानेकी की ताकत का रहस्य", "category": "Anime"},
-    {"topic": "जेम्स बॉन्ड 007 की नई फिल्म की समीक्षा", "category": "Movie"},
-    {"topic": "अटैक ऑन टाइटन: क्या एरेन की योजना सही थी?", "category": "Anime"},
-    {"topic": "पाइरेट्स ऑफ द कैरेबियन: अगर जैक स्पैरो ने पर्ल को नहीं खोया होता?", "category": "Adventure"},
-    {"topic": "ड्यून पार्ट 3: पॉल एटराइड्स की कहानी का विश्लेषण", "category": "Movie"},
-    {"topic": "फुलमेटल अल्केमिस्ट: एडवर्ड बनाम मस्टैंग - कौन अधिक शक्तिशाली?", "category": "Anime"},
+    {"topic": "Dragon Ball Z mein sabse powerful character kaun hai?", "category": "Anime"},
+    {"topic": "Avatar: The Last Airbender - What if Aang didn’t defeat Ozai?", "category": "Anime"},
+    {"topic": "Marvel ki new movie 'Avengers: Secret Wars' ka review", "category": "Movie"},
+    {"topic": "Jurassic Park: Agar dinosaurs sach mein survive karte toh kya hota?", "category": "Adventure"},
+    {"topic": "Naruto vs Sasuke: Who’s the real ninja?", "category": "Anime"},
+    {"topic": "Indiana Jones ki new adventure story ka review", "category": "Adventure"},
+    {"topic": "One Piece mein Luffy ki strength ka analysis", "category": "Anime"},
+    {"topic": "The Lion King (2025 remake): Is it better than the classic?", "category": "Movie"},
+    {"topic": "Agar Harry Potter mein Voldemort jeet jata toh kya hota?", "category": "Adventure"},
+    {"topic": "Tokyo Ghoul: Kaneki ki power ka secret", "category": "Anime"},
+    {"topic": "James Bond 007 ki latest film ka review", "category": "Movie"},
+    {"topic": "Attack on Titan: Was Eren’s plan right?", "category": "Anime"},
+    {"topic": "Pirates of the Caribbean: What if Jack Sparrow didn’t lose the Pearl?", "category": "Adventure"},
+    {"topic": "Dune Part 3: Paul Atreides ki story ka analysis", "category": "Movie"},
+    {"topic": "Fullmetal Alchemist: Edward vs Mustang - Who’s more powerful?", "category": "Anime"},
 ]
 
 USED_TOPICS = set()
 USED_CONTENTS = set()
-
-def generate_slug(title):
-    """Generate URL-friendly slug."""
-    if not title:
-        return "untitled-post"
-    slug = re.sub(r'[^\w\s-]', '', title.lower()).replace(' ', '-').strip('-')[:50]
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT title FROM blogs")
-        existing_titles = {row[0] for row in cursor.fetchall()}
-        conn.close()
-        original_slug = slug
-        counter = 1
-        while slug in existing_titles:
-            slug = f"{original_slug}-{counter}"
-            counter += 1
-        return slug
-    except sqlite3.Error as e:
-        app.logger.error(f"Error generating slug: {e}")
-        return slug
 
 def clean_content(content):
     """Remove markdown symbols from content to ensure plain text."""
@@ -213,17 +194,17 @@ def clean_content(content):
     return content.strip()[:4000]  # Limit to 4000 characters
 
 def humanize_content(content):
-    """Humanize content using Gemini API."""
+    """Humanize content using Gemini API with a female-like conversational tone."""
     prompt = f"""
-    निम्नलिखित सामग्री को एक आकर्षक, मानव जैसी और 2025 के दर्शकों के लिए उपयुक्त ब्लॉग पोस्ट में बदलें।
-    सामग्री को हिंदी में लिखें, जो 1000-1500 शब्दों की हो, और अधिकतम 4000 अक्षरों तक सीमित हो।
-    लेख को रोचक, जानकारीपूर्ण और प्राकृतिक बनाएं, जिसमें रोबोटिक या AI-जनरेटेड भाषा न हो।
-    शुरुआत एक आकर्षक परिचय से करें (जैसे कोई वास्तविक परिदृश्य, सवाल या छोटी कहानी)।
-    विश्वसनीय स्रोतों या अध्ययनों का उल्लेख करें (जैसे "2025 में [संस्थान] का अध्ययन" या "[संगठन] के विशेषज्ञों के अनुसार")।
-    सरल, SEO-अनुकूल भाषा का उपयोग करें और तार्किक प्रवाह बनाए रखें।
-    आउटपुट सादा टेक्स्ट हो, बिना मार्कडाउन प्रतीकों (जैसे **, *, #, या लिंक) के।
+    Niche di gayi content ko ek engaging, human-like aur 2025 ke audience ke liye perfect blog post mein convert karo.
+    Content ko Hindi aur English ke mix mein likho, jo 1000-1500 words ka ho aur maximum 4000 characters tak limited ho.
+    Tone ko aisa rakho jaise koi female writer likh rahi ho - conversational, relatable aur thodi fun vibe ke saath, taaki robotic ya AI-generated na lage.
+    Start with a catchy intro (jaise koi real-life scenario, question ya chhoti si story).
+    Credible sources ya studies ka mention karo (like "2025 mein [Institute] ke study ke according" ya "[Organization] ke experts kehte hain").
+    Simple, SEO-friendly language use karo aur logical flow maintain rakho.
+    Output plain text ho, without markdown symbols (no **, *, #, ya links).
 
-    मूल सामग्री:
+    Original Content:
     {content}
     """
     max_retries = 2
@@ -260,25 +241,31 @@ def get_existing_data():
         }
     except sqlite3.Error as e:
         app.logger.error(f"Error fetching existing data: {e}")
+        # If table doesn't exist, attempt to initialize database
+        if "no such table" in str(e).lower():
+            app.logger.info("Attempting to initialize database due to missing table.")
+            if initialize_database():
+                app.logger.info("Database initialized successfully.")
+                return {'titles': set(), 'contents': set()}
         return {'titles': set(), 'contents': set()}
 
 def generate_post_with_gemini(topic, category):
     """Generate blog post using Gemini API."""
     app.logger.debug(f"Generating post for topic: {topic} with Gemini")
     prompt = f"""
-    आप एक विशेषज्ञ सामग्री निर्माता हैं, जो 2025 के दर्शकों के लिए आकर्षक और मानव जैसी ब्लॉग पोस्ट लिखते हैं।
-    विषय पर एक ब्लॉग पोस्ट बनाएं: "{topic}"।
-    - एक आकर्षक, पेशेवर और SEO-अनुकूल शीर्षक बनाएं (10-15 शब्द, विषय से संबंधित और रोचक)।
-    - प्रारूप: एक विस्तृत लेख (लगभग 1000-1500 शब्द, अधिकतम 4000 अक्षर)।
-    - शुरुआत एक आकर्षक परिचय से करें (जैसे कोई वास्तविक परिदृश्य, सवाल या छोटी कहानी)।
-    - विश्वसनीय स्रोतों या अध्ययनों का उल्लेख करें (जैसे "2025 में [संस्थान] का अध्ययन" या "[संगठन] के विशेषज्ञों के अनुसार")।
-    - सरल, बातचीत जैसी, SEO-अनुकूल हिंदी भाषा का उपयोग करें जो प्राकृतिक लगे।
-    - आउटपुट सादा टेक्स्ट हो, बिना मार्कडाउन प्रतीकों (जैसे **, *, #, या लिंक) के।
-    - लेख को {category} श्रेणी के लिए उपयुक्त बनाएं।
+    Tum ek expert content creator ho, jo 2025 ke audience ke liye engaging aur human-like blog posts likhti ho.
+    Ek blog post banao on the topic: "{topic}".
+    - Ek catchy, professional aur SEO-friendly title banao (10-15 words, topic se related aur interesting).
+    - Format: Ek detailed article (around 1000-1500 words, max 4000 characters).
+    - Shuruaat ek catchy intro se karo (jaise koi real-life scenario, sawal ya chhoti story).
+    - Credible sources ya studies ka mention karo (like "2025 mein [Institute] ke study ke according" ya "[Organization] ke experts kehte hain").
+    - Simple, conversational Hindi-English mix language use karo jo natural lage aur female writer ka vibe de.
+    - Output plain text ho, without markdown symbols (no **, *, #, ya links).
+    - Article ko {category} category ke liye suitable banao.
 
-    उदाहरण:
-    शीर्षक: ड्रैगन बॉल Z में सबसे ताकतवर किरदार कौन है?
-    परिचय: क्या आपने कभी सोचा कि अगर गोकू और वेजिटा आमने-सामने लड़ें तो कौन जीतेगा? [आगे रोचक सामग्री...]
+    Example:
+    Title: Dragon Ball Z Mein Sabse Powerful Character Kaun Hai?
+    Intro: Soch, agar Goku aur Vegeta ek ultimate face-off mein aa jaye, toh kaun jeetega? [Continue with engaging content...]
     """
     data = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -332,6 +319,7 @@ def generate_unique_post():
             category = topic_data["category"]
             content = generate_post_with_gemini(topic, category)
             if not content or content in USED_CONTENTS or content in existing_contents:
+                app.logger.warning(f"Content for topic {topic} is duplicate or empty, skipping.")
                 continue
             humanized_content = humanize_content(content)
             cleaned_content = clean_content(humanized_content)
@@ -339,12 +327,11 @@ def generate_unique_post():
                 app.logger.warning(f"Failed to generate valid content for topic: {topic}")
                 continue
             lines = cleaned_content.split('\n')
-            title = next((line.replace("शीर्षक: ", "").strip() for line in lines if line.startswith("शीर्षक: ")), topic[:50])
-            slug = generate_slug(title)
+            title = next((line.replace("Title: ", "").replace("शीर्षक: ", "").strip() for line in lines if line.startswith(("Title: ", "शीर्षक: "))), topic[:50])
             i = 1
+            original_title = title
             while title in existing_titles:
-                title = f"{title} ({i})"
-                slug = f"{generate_slug(title)}-{i}"
+                title = f"{original_title} ({i})"
                 i += 1
             new_post = {
                 "title": title,
@@ -362,7 +349,7 @@ def generate_unique_post():
         app.logger.error("Could not generate unique post.")
         return None
     except Exception as e:
-        app.logger.error(f"generate_unique_post error: {e}")
+        app.logger.error(f"generate_unique_post error: {str(e)}")
         return None
 
 def auto_generate_and_upload():
