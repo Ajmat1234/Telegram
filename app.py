@@ -47,7 +47,7 @@ HEADERS = {"Content-Type": "application/json"}
 
 # Telegram Bot setup
 TELEGRAM_BOT_TOKEN = "7627792094:AAFGr_KxbimGv4qHzh86bDxCGWPhCgw9wbI"
-TELEGRAM_CHANNEL = "https://t.me/TheWatchDraft"
+TELEGRAM_CHANNEL = "@TheWatchDraft"  # Replace with your actual channel ID if different
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # SQLite setup
@@ -109,7 +109,7 @@ def fetch_blogs_from_supabase():
             response = supabase.table('tables').select('id, title, content, category').range(offset, offset + page_size - 1).execute()
             fetched_blogs = response.data or []
             blogs.extend(fetched_blogs)
-            app.logger.info(f"Fetched {len(fetched_blogs)} blogs, total: {len(blogs)}")
+            app.logger.info(f"Fetched {len(fetched_blogs)} blogs from Supabase, total: {len(blogs)}")
             if len(fetched_blogs) < page_size:
                 break
             offset += page_size
@@ -243,7 +243,7 @@ def get_existing_data():
         app.logger.error(f"Error fetching existing data: {e}")
         # If table doesn't exist, attempt to initialize database
         if "no such table" in str(e).lower():
-            app.logger.info("AttemptাবিAttempting to initialize database due to missing table.")
+            app.logger.info("Attempting to initialize database due to missing table.")
             if initialize_database():
                 app.logger.info("Database initialized successfully.")
                 return {'titles': set(), 'contents': set()}
