@@ -6,3 +6,4 @@ supabase==1.0.3
 pyjwt==2.8.0
 telebot==0.0.5
 schedule==1.2.1
+gunicorn
