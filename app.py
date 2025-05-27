@@ -106,7 +106,7 @@ def fetch_blogs_from_supabase():
     offset = 0
     while True:
         try:
-            response = supabase.table('blogs').select('id, title, content, category').range(offset, offset + page_size - 1).execute()
+            response = supabase.table('tables').select('id, title, content, category').range(offset, offset + page_size - 1).execute()
             fetched_blogs = response.data or []
             blogs.extend(fetched_blogs)
             app.logger.info(f"Fetched {len(fetched_blogs)} blogs, total: {len(blogs)}")
