@@ -45,9 +45,9 @@ if not GEMINI_API_KEY:
 GENINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 HEADERS = {"Content-Type": "application/json"}
 
-# Telegram Bot setup
-TELEGRAM_BOT_TOKEN = "7627792094:AAFGr_KxbimGv4qHzh86bDxCGWPhCgw9wbI"
-TELEGRAM_CHANNEL = "https://t.me/TheWatchDraft"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")
+
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # SQLite setup
@@ -375,7 +375,7 @@ def keep_alive():
     """Keep server alive."""
     while True:
         try:
-            requests.get("https://your-app-url.onrender.com/ping")
+            requests.get("https://telegram-yvmd.onrender.com/ping")
             app.logger.info("Keep-alive ping.")
         except Exception as e:
             app.logger.error(f"keep_alive error: {e}")
