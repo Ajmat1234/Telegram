@@ -47,7 +47,7 @@ HEADERS = {"Content-Type": "application/json"}
 
 # Telegram Bot setup
 TELEGRAM_BOT_TOKEN = "7627792094:AAFGr_KxbimGv4qHzh86bDxCGWPhCgw9wbI"
-TELEGRAM_CHANNEL = "@TheWatchDraft"  # Replace with your actual channel ID if different
+TELEGRAM_CHANNEL = "@TheWatchDraft"
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 # SQLite setup
@@ -58,7 +58,6 @@ def initialize_database():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Ensure the directory for DB_PATH exists
             os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else '.', exist_ok=True)
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
@@ -156,7 +155,7 @@ def insert_blog_to_db(blog):
     except sqlite3.Error as e:
         app.logger.error(f"Error inserting blog to SQLite: {e}")
 
-# Content topics for movies, anime, and adventure
+# Expanded Content Topics with more variety
 CONTENT_TOPICS = [
     {"topic": "Dragon Ball Z mein sabse powerful character kaun hai?", "category": "Anime"},
     {"topic": "Avatar: The Last Airbender - What if Aang didn’t defeat Ozai?", "category": "Anime"},
@@ -173,10 +172,29 @@ CONTENT_TOPICS = [
     {"topic": "Pirates of the Caribbean: What if Jack Sparrow didn’t lose the Pearl?", "category": "Adventure"},
     {"topic": "Dune Part 3: Paul Atreides ki story ka analysis", "category": "Movie"},
     {"topic": "Fullmetal Alchemist: Edward vs Mustang - Who’s more powerful?", "category": "Anime"},
+    {"topic": "The Matrix Resurrections: Neo ki return ka impact", "category": "Movie"},
+    {"topic": "Bleach: Ichigo ki Bankai ka full potential", "category": "Anime"},
+    {"topic": "Star Wars: The Rise of Skywalker - Alternate Ending Theories", "category": "Adventure"},
+    {"topic": "Demon Slayer: Tanjiro vs Muzan - The Final Battle", "category": "Anime"},
+    {"topic": "The Witcher: Geralt ki journey ka analysis", "category": "Adventure"},
+    {"topic": "Spider-Man: No Way Home - Multiverse ka asar", "category": "Movie"},
+    {"topic": "My Hero Academia: Deku ki quirk ka evolution", "category": "Anime"},
+    {"topic": "Lord of the Rings: What if Frodo kept the ring?", "category": "Adventure"},
+    {"topic": "Black Clover: Asta ki anti-magic ka secret", "category": "Anime"},
+    {"topic": "The Dark Knight: Joker ki philosophy ka analysis", "category": "Movie"},
+    {"topic": "Jujutsu Kaisen: Gojo Satoru ki strength ka breakdown", "category": "Anime"},
+    {"topic": "The Hobbit: Bilbo Baggins ki adventure ka review", "category": "Adventure"},
+    {"topic": "Hunter x Hunter: Gon vs Killua - Who’s stronger?", "category": "Anime"},
+    {"topic": "Inception: Dream within a dream - Explained", "category": "Movie"},
+    {"topic": "Sword Art Online: Kirito ki virtual reality journey", "category": "Anime"},
+    {"topic": "The Chronicles of Narnia: Aslan ki symbolism", "category": "Adventure"},
+    {"topic": "Death Note: Light Yagami ki morality ka debate", "category": "Anime"},
+    {"topic": "The Godfather: Michael Corleone ki transformation", "category": "Movie"},
 ]
 
 USED_TOPICS = set()
 USED_CONTENTS = set()
+LAST_CATEGORY = None
 
 def clean_content(content):
     """Remove markdown symbols from content to ensure plain text."""
@@ -191,7 +209,7 @@ def clean_content(content):
     content = re.sub(r'`([^`]+)`', r'\1', content)
     content = re.sub(r'^\s*[-*+]\s+', '', content, flags=re.MULTILINE)
     content = re.sub(r'\n\s*\n+', '\n\n', content)
-    return content.strip()[:4000]  # Limit to 4000 characters
+    return content.strip()[:4000]
 
 def humanize_content(content):
     """Humanize content using Gemini API with a female-like conversational tone."""
@@ -212,7 +230,7 @@ def humanize_content(content):
         try:
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.9, "topK": 40, "topP": 0.95, "maxOutputTokens": 1500}
+                "generationConfig": {"temperature": 0.9, "topK": 40, "topP": 0.95, "maxOutputTokens": 2048}
             }
             response = requests.post(GENINI_URL, headers=HEADERS, json=payload, timeout=30)
             response.raise_for_status()
@@ -241,7 +259,6 @@ def get_existing_data():
         }
     except sqlite3.Error as e:
         app.logger.error(f"Error fetching existing data: {e}")
-        # If table doesn't exist, attempt to initialize database
         if "no such table" in str(e).lower():
             app.logger.info("Attempting to initialize database due to missing table.")
             if initialize_database():
@@ -250,7 +267,7 @@ def get_existing_data():
         return {'titles': set(), 'contents': set()}
 
 def generate_post_with_gemini(topic, category):
-    """Generate blog post using Gemini API."""
+    """Generate blog post using Gemini API with theories."""
     app.logger.debug(f"Generating post for topic: {topic} with Gemini")
     prompt = f"""
     Tum ek expert content creator ho, jo 2025 ke audience ke liye engaging aur human-like blog posts likhti ho.
@@ -260,6 +277,7 @@ def generate_post_with_gemini(topic, category):
     - Shuruaat ek catchy intro se karo (jaise koi real-life scenario, sawal ya chhoti story).
     - Credible sources ya studies ka mention karo (like "2025 mein [Institute] ke study ke according" ya "[Organization] ke experts kehte hain").
     - Simple, conversational Hindi-English mix language use karo jo natural lage aur female writer ka vibe de.
+    - Topic se related theories ya hypothetical scenarios include karo taaki content unique aur interesting ho.
     - Output plain text ho, without markdown symbols (no **, *, #, ya links).
     - Article ko {category} category ke liye suitable banao.
 
@@ -269,7 +287,7 @@ def generate_post_with_gemini(topic, category):
     """
     data = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.9, "maxOutputTokens": 1500}
+        "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.9, "maxOutputTokens": 2048}
     }
     try:
         response = requests.post(GENINI_URL, headers=HEADERS, json=data, timeout=30)
@@ -287,32 +305,34 @@ def generate_post_with_gemini(topic, category):
         return None
 
 def post_to_telegram(post):
-    """Post content to Telegram channel."""
+    """Post content to Telegram channel, handling long content."""
     try:
-        message = f"{post['title']}\n\n{post['content'][:1000]}...\n\n#TheWatchDraft #{post['category']}"
+        message = f"{post['title']}\n\n{post['content'][:2000]}...\n\n#TheWatchDraft #{post['category']}"
+        if len(message) > 4096:  # Telegram's max message length
+            message = f"{post['title']}\n\n{post['content'][:1500]}...\n\n#TheWatchDraft #{post['category']}"
         bot.send_message(TELEGRAM_CHANNEL, message)
         app.logger.info(f"Posted to Telegram: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Telegram: {e}")
 
 def generate_unique_post():
-    """Generate unique blog post with shuffled topics."""
+    """Generate unique blog post with category rotation."""
     try:
         existing_data = get_existing_data()
         existing_titles = existing_data['titles']
         existing_contents = existing_data['contents']
-        global USED_TOPICS, USED_CONTENTS
+        global USED_TOPICS, USED_CONTENTS, LAST_CATEGORY
         if not USED_TOPICS:
             USED_TOPICS = existing_titles
         if not USED_CONTENTS:
             USED_CONTENTS = existing_contents
         all_topics = CONTENT_TOPICS
-        available_topics = [t for t in all_topics if t["topic"] not in USED_TOPICS]
+        available_topics = [t for t in all_topics if t["topic"] not in USED_TOPICS and t["category"] != LAST_CATEGORY]
         random.shuffle(available_topics)
         if not available_topics:
-            app.logger.warning("All topics used. Resetting.")
+            app.logger.warning("All topics used or category repeated. Resetting.")
             USED_TOPICS.clear()
-            available_topics = all_topics
+            available_topics = [t for t in all_topics if t["category"] != LAST_CATEGORY]
             random.shuffle(available_topics)
         for topic_data in available_topics:
             topic = topic_data["topic"]
@@ -343,6 +363,7 @@ def generate_unique_post():
             insert_blog_to_db(inserted_post)
             USED_TOPICS.add(topic)
             USED_CONTENTS.add(cleaned_content)
+            LAST_CATEGORY = category
             post_to_telegram(inserted_post)
             app.logger.info(f"Generated post: {title} with category: {category}")
             return new_post
@@ -359,14 +380,16 @@ def auto_generate_and_upload():
         app.logger.info(f"Generated post: {post['title']}")
 
 def keep_alive():
-    """Keep server alive."""
+    """Keep server alive with improved logging."""
     while True:
         try:
-            response = requests.get("https://telegram-yvmd.onrender.com/ping", timeout=10)
+            url = "https://telegram-yvmd.onrender.com/ping"
+            app.logger.debug(f"Sending keep-alive ping to {url}")
+            response = requests.get(url, timeout=10)
             app.logger.info(f"Keep-alive ping, status: {response.status_code}")
         except Exception as e:
             app.logger.error(f"keep_alive error: {e}")
-        time.sleep(300)
+        time.sleep(300)  # 5 minutes
 
 @app.route('/ping')
 def ping():
