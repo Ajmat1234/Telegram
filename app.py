@@ -14,7 +14,6 @@ import schedule
 import re
 import random
 import telebot
-import asyncio
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -49,9 +48,6 @@ HEADERS = {"Content-Type": "application/json"}
 # Telegram Bot setup
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL:
-    app.logger.error("TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL must be set.")
-    raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL must be set.")
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
@@ -160,28 +156,32 @@ def insert_blog_to_db(blog):
     except sqlite3.Error as e:
         app.logger.error(f"Error inserting blog to SQLite: {e}")
 
-# Categories for dynamic topic generation
-CATEGORIES = ["Anime", "Movie", "Adventure"]
+# New unique topics generator
+def generate_unique_topic():
+    """Generate unique topics dynamically."""
+    movies = [
+        "Interstellar: What If We Never Left Earth?", "Blade Runner 2049: Are Replicants Human?",
+        "Mad Max: Fury Road - Could Immortan Joe Win?", "The Incredibles: Superhero Family Dynamics",
+        "Back to the Future: Time Travel Paradoxes Explained"
+    ]
+    anime = [
+        "Haikyuu: Can Determination Beat Talent?", "Spy x Family: Anya’s Secret Powers Analyzed",
+        "Vinland Saga: Thorfinn’s Redemption Arc Breakdown", "Dr. Stone: Science vs. Strength",
+        "Steins;Gate: Time Travel’s Dark Consequences"
+    ]
+    adventures = [
+        "Jumanji: What If the Game Never Ended?", "The Mummy: Rick O’Connell’s Bravest Moments",
+        "Treasure Planet: Jim Hawkins’ Galactic Quest", "King Kong: Could He Survive Today?",
+        "Journey to the Center of the Earth: Is It Possible?"
+    ]
+    categories = {"Movie": movies, "Anime": anime, "Adventure": adventures}
+    category = random.choice(list(categories.keys()))
+    topic = random.choice(categories[category])
+    return {"topic": topic, "category": category}
 
-def generate_dynamic_topic():
-    """Generate a unique topic using Gemini API."""
-    prompt = """
-    Suggest a unique topic related to movies, anime, or adventure for a 2025 audience. The topic should be specific, engaging, and suitable for a blog post. Focus on fresh ideas, theories, or hypothetical scenarios not commonly discussed. Avoid these topics: Dragon Ball Z power rankings, Avatar: The Last Airbender Ozai scenarios, Avengers: Secret Wars reviews, Jurassic Park dinosaur survival, Naruto vs Sasuke, Indiana Jones adventures, One Piece Luffy strength, Lion King 2025 remake, Harry Potter Voldemort wins, Tokyo Ghoul Kaneki powers, James Bond reviews, Attack on Titan Eren’s plan, Pirates of the Caribbean Jack Sparrow, Dune Part 3, Fullmetal Alchemist Edward vs Mustang, Matrix Resurrections Neo, Bleach Ichigo Bankai, Star Wars alternate endings, Demon Slayer Tanjiro vs Muzan, Witcher Geralt journey, Spider-Man multiverse, My Hero Academia Deku quirk, Lord of the Rings Frodo ring, Black Clover Asta anti-magic, Dark Knight Joker philosophy, Jujutsu Kaisen Gojo strength, Hobbit Bilbo adventures, Hunter x Hunter Gon vs Killua, Inception dream explanation, Sword Art Online Kirito journey, Narnia Aslan symbolism, Death Note Light morality, Godfather Michael transformation. Provide the topic and its category (Anime, Movie, or Adventure) in the format: {"topic": "<topic>", "category": "<category>"}.
-    """
-    try:
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.8, "topK": 40, "topP": 0.9, "maxOutputTokens": 100}
-        }
-        response = requests.post(GENINI_URL, headers=HEADERS, json=payload, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        topic_data = json.loads(data["candidates"][0]["content"]["parts"][0]["text"].strip())
-        app.logger.info(f"Generated dynamic topic: {topic_data['topic']}")
-        return topic_data
-    except Exception as e:
-        app.logger.error(f"Failed to generate dynamic topic: {e}")
-        return {"topic": "What if Spider-Man joined the X-Men?", "category": "Movie"}  # Fallback
+USED_TOPICS = set()
+USED_CONTENTS = set()
+LAST_CATEGORY = None
 
 def clean_content(content):
     """Remove markdown symbols from content to ensure plain text."""
@@ -196,12 +196,20 @@ def clean_content(content):
     content = re.sub(r'`([^`]+)`', r'\1', content)
     content = re.sub(r'^\s*[-*+]\s+', '', content, flags=re.MULTILINE)
     content = re.sub(r'\n\s*\n+', '\n\n', content)
-    return content.strip()[:3000]
+    return content.strip()[:1500]  # Reduced length for shorter posts
 
 def humanize_content(content):
-    """Humanize content using Gemini API with a fun, engaging tone."""
+    """Humanize content using Gemini API with a fun, humorous tone."""
     prompt = f"""
-    Turn the following content into an engaging, human-like blog post for a 2025 audience. Write in pure English with a fun, humorous, and conversational tone, like a witty friend chatting about movies or anime. Keep it concise (800-1000 words, max 3000 characters). Start with a catchy, relatable intro (e.g., a funny scenario or question). Add humor and light-hearted vibes to make it entertaining. Include credible sources (e.g., "A 2025 CinemaScope study says..." or "Experts at PopCultureLab claim..."). End with an engaging question to spark discussion. Ensure a logical flow and SEO-friendly language. Output plain text, no markdown symbols.
+    Turn the content below into a fun, engaging blog post for a 2025 audience.
+    - Write in English only, with a conversational, female writer vibe.
+    - Keep it short (500-800 words, max 1500 characters).
+    - Start with a humorous or relatable hook (like a funny scenario or witty question).
+    - Add humor and playful tone (e.g., sarcastic remarks, pop culture references).
+    - Reference credible sources (e.g., "A 2025 Pop Culture Institute study says...").
+    - End with an engaging question to spark discussion.
+    - Use simple, SEO-friendly language with a logical flow.
+    - Output plain text, no markdown symbols.
 
     Original Content:
     {content}
@@ -211,7 +219,7 @@ def humanize_content(content):
         try:
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.9, "topK": 40, "topP": 0.95, "maxOutputTokens": 2048}
+                "generationConfig": {"temperature": 0.9, "topK": 40, "topP": 0.95, "maxOutputTokens": 1024}
             }
             response = requests.post(GENINI_URL, headers=HEADERS, json=payload, timeout=30)
             response.raise_for_status()
@@ -247,33 +255,41 @@ def get_existing_data():
                 return {'titles': set(), 'contents': set()}
         return {'titles': set(), 'contents': set()}
 
+def generate_hashtags(topic, category):
+    """Generate 10 relevant hashtags for the topic."""
+    base_tags = {
+        "Anime": ["#AnimeVibes", "#AnimeFans", "#AnimeWorld", "#AnimeLife", "#AnimeLovers"],
+        "Movie": ["#MovieNight", "#FilmFans", "#CinemaLovers", "#MovieMagic", "#Blockbuster"],
+        "Adventure": ["#AdventureTime", "#EpicJourney", "#ThrillSeekers", "#AdventureAwaits", "#ExploreMore"]
+    }
+    topic_words = topic.lower().replace(":", "").replace("?", "").split()
+    topic_tags = [f"#{word.capitalize()}" for word in topic_words[:3]]
+    category_tags = base_tags.get(category, [])
+    all_tags = list(set(category_tags + topic_tags + ["#TheWatchDraft", "#PopCulture2025", "#FanTheories"]))
+    return all_tags[:10]
+
 def generate_post_with_gemini(topic, category):
-    """Generate blog post using Gemini API with theories and hashtags."""
+    """Generate blog post using Gemini API with humor and theories."""
     app.logger.debug(f"Generating post for topic: {topic} with Gemini")
     prompt = f"""
-    You are an expert content creator writing for a 2025 audience. Create a blog post on the topic: "{topic}".
-    - Write a catchy, professional, SEO-friendly title (10-15 words).
-    - Format: A concise article (800-1000 words, max 3000 characters).
-    - Start with a fun, relatable intro (e.g., a humorous scenario or question).
-    - Use pure English with a witty, conversational tone, like a friend joking about movies or anime.
-    - Include credible sources (e.g., "A 2025 CinemaScope study says..." or "PopCultureLab experts claim...").
-    - Add humor and light-hearted vibes to make it engaging.
-    - Include theories or hypothetical scenarios to make the content unique.
-    - End with an engaging question to spark discussion.
-    - Generate 10 topic-specific hashtags relevant to the topic and category ({category}).
-    - Output plain text, no markdown symbols, in this format:
-    Title: <title>
-    Content: <content>
-    Hashtags: <hashtag1> <hashtag2> ... <hashtag10>
+    You're a witty content creator writing for a 2025 global audience.
+    Create a blog post on: "{topic}".
+    - Write a catchy, SEO-friendly title (10-12 words, fun and engaging).
+    - Keep it short (500-800 words, max 1500 characters).
+    - Start with a funny or relatable hook (e.g., a quirky scenario or sarcastic question).
+    - Use a playful, female writer tone with humor (sarcastic remarks, pop culture references).
+    - Include a fan theory or hypothetical scenario to make it unique.
+    - Mention credible sources (e.g., "A 2025 Pop Culture Institute study says...").
+    - End with an engaging question for the audience.
+    - Write in English only, no markdown symbols, simple and SEO-friendly.
 
     Example:
-    Title: Could Spider-Man Join the X-Men?
-    Content: Ever wondered what would happen if Peter Parker ditched his solo gigs and teamed up with the X-Men? Picture this: Spidey swinging into Xavier’s School, cracking jokes while Wolverine growls at him. A 2025 CinemaScope study says crossovers like this are pure fanbait, and we’re here for it! ... [continues with humor and theories] So, what do you think – would Spidey fit with the mutants?
-    Hashtags: #SpiderMan #XMen #MarvelMovies #SuperheroCrossover #PeterParker #MutantMayhem #MarvelTheory #ComicBookFun #MCU2025 #HeroVibes
+    Title: Could Spider-Man Survive a Zombie Apocalypse?
+    Okay, picture this: Spider-Man swinging through a zombie-infested New York, web-slinging brains instead of bad guys. Sounds like a wild ride, right? ... [Continue with humor, theories, and a question]
     """
     data = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.9, "maxOutputTokens": 2048}
+        "generationConfig": {"temperature": 0.8, "topK": 40, "topP": 0.9, "maxOutputTokens": 1024}
     }
     try:
         response = requests.post(GENINI_URL, headers=HEADERS, json=data, timeout=30)
@@ -290,19 +306,20 @@ def generate_post_with_gemini(topic, category):
         app.logger.error(f"Gemini network error: {e}")
         return None
 
-async def post_to_telegram(post):
-    """Post content to Telegram channel, handling long content."""
+def post_to_telegram(post, topic):
+    """Post content to Telegram channel with hashtags."""
     try:
-        message = f"{post['title']}\n\n{post['content'][:1500]}...\n\nJoin @TheWatchDraft for more! {post['hashtags']}"
-        if len(message) > 4096:  # Telegram's max message length
-            message = f"{post['title']}\n\n{post['content'][:1000]}...\n\nJoin @TheWatchDraft for more! {post['hashtags']}"
-        await bot.send_message(TELEGRAM_CHANNEL, message)
+        hashtags = " ".join(generate_hashtags(topic, post['category']))
+        message = f"{post['title']}\n\n{post['content']}\n\n{hashtags}"
+        if len(message) > 4096:
+            message = f"{post['title']}\n\n{post['content'][:1000]}...\n\n{hashtags}"
+        bot.send_message(TELEGRAM_CHANNEL, message)
         app.logger.info(f"Posted to Telegram: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Telegram: {e}")
 
-async def generate_unique_post():
-    """Generate unique blog post with dynamic topics."""
+def generate_unique_post():
+    """Generate unique blog post with category rotation."""
     try:
         existing_data = get_existing_data()
         existing_titles = existing_data['titles']
@@ -312,48 +329,33 @@ async def generate_unique_post():
             USED_TOPICS = existing_titles
         if not USED_CONTENTS:
             USED_CONTENTS = existing_contents
-
-        # Generate dynamic topic
-        topic_data = generate_dynamic_topic()
+        topic_data = generate_unique_topic()
         topic = topic_data["topic"]
         category = topic_data["category"]
-
-        # Ensure category rotation
-        if category == LAST_CATEGORY:
-            app.logger.warning("Same category as last post, generating new topic.")
-            topic_data = generate_dynamic_topic()
+        while topic in USED_TOPICS or category == LAST_CATEGORY:
+            topic_data = generate_unique_topic()
             topic = topic_data["topic"]
             category = topic_data["category"]
-
         content = generate_post_with_gemini(topic, category)
         if not content or content in USED_CONTENTS or content in existing_contents:
             app.logger.warning(f"Content for topic {topic} is duplicate or empty, skipping.")
             return None
-
         humanized_content = humanize_content(content)
         cleaned_content = clean_content(humanized_content)
         if not cleaned_content:
             app.logger.warning(f"Failed to generate valid content for topic: {topic}")
             return None
-
-        # Parse title and hashtags
         lines = cleaned_content.split('\n')
         title = next((line.replace("Title: ", "").strip() for line in lines if line.startswith("Title: ")), topic[:50])
-        hashtags = next((line.replace("Hashtags: ", "").strip() for line in lines if line.startswith("Hashtags: ")), "")
-        content_lines = [line for line in lines if not line.startswith(("Title: ", "Hashtags: "))]
-        cleaned_content = "\n".join(content_lines).strip()
-
         i = 1
         original_title = title
         while title in existing_titles:
             title = f"{original_title} ({i})"
             i += 1
-
         new_post = {
             "title": title,
             "content": cleaned_content,
-            "category": category,
-            "hashtags": hashtags
+            "category": category
         }
         response = supabase.table('tables').insert(new_post).execute()
         inserted_post = response.data[0]
@@ -361,16 +363,16 @@ async def generate_unique_post():
         USED_TOPICS.add(topic)
         USED_CONTENTS.add(cleaned_content)
         LAST_CATEGORY = category
-        await post_to_telegram(inserted_post)
+        post_to_telegram(inserted_post, topic)
         app.logger.info(f"Generated post: {title} with category: {category}")
         return new_post
     except Exception as e:
         app.logger.error(f"generate_unique_post error: {str(e)}")
         return None
 
-async def auto_generate_and_upload():
+def auto_generate_and_upload():
     """Auto-generate and upload post."""
-    post = await generate_unique_post()
+    post = generate_unique_post()
     if post:
         app.logger.info(f"Generated post: {post['title']}")
 
@@ -393,9 +395,9 @@ def ping():
     return jsonify({"status": "alive"}), 200
 
 @app.route('/generate', methods=['GET', 'POST'])
-async def manual_generate():
+def manual_generate():
     try:
-        post = await generate_unique_post()
+        post = generate_unique_post()
         return jsonify({"message": "Post generated" if post else "Failed to generate post", "post": post}), 200 if post else 500
     except Exception as e:
         app.logger.error(f"Error in /generate: {e}")
@@ -409,19 +411,12 @@ def view_logs():
     except Exception as e:
         return jsonify({"message": "Error reading logs", "error": str(e)}), 500
 
-async def run_scheduler():
+def run_scheduler():
     """Run scheduler for periodic tasks."""
-    schedule.every(1).hours.do(lambda: asyncio.run(auto_generate_and_upload()))
+    schedule.every(1).hours.do(auto_generate_and_upload)
     while True:
         schedule.run_pending()
-        await asyncio.sleep(60)
-
-def start_scheduler():
-    """Start the async scheduler in a separate thread."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_scheduler())
-    loop.close()
+        time.sleep(60)
 
 if __name__ == '__main__':
     app.logger.info("Starting application...")
@@ -434,5 +429,5 @@ if __name__ == '__main__':
             app.logger.error("Failed to populate database on startup.")
             raise RuntimeError("Database population failed")
     threading.Thread(target=keep_alive, daemon=True).start()
-    threading.Thread(target=start_scheduler, daemon=True).start()
+    threading.Thread(target=run_scheduler, daemon=True).start()
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
