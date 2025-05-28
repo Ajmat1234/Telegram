@@ -2,13 +2,13 @@ Flask==2.3.3
 flask-cors==4.0.0
 requests==2.31.0
 python-dotenv==1.0.1
-supabase==1.0.3
+supabase==1.2.0
 pyjwt==2.8.0
-telebot==0.0.5
-schedule==1.2.1
-gunicorn
 python-telegram-bot==20.7
+schedule==1.2.1
+gunicorn==22.0.0
 tweepy==4.14.0
 praw==7.7.1
 pytumblr==0.1.2
 mastodon.py==1.8.1
+httpx==0.23.0
