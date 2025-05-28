@@ -97,29 +97,43 @@ mastodon = Mastodon(
 )
 
 # SQLite setup
-DB_PATH = "blogs.db"
+DB_PATH = os.path.join(os.getcwd(), "blogs.db")  # Full path for safety
+db_lock = threading.Lock()
+
+app.logger.info(f"Current working directory: {os.getcwd()}")
+app.logger.info(f"Database path: {DB_PATH}")
 
 def initialize_database():
-    """Initialize SQLite database with retries."""
+    """Initialize SQLite database with retries and checks."""
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else '.', exist_ok=True)
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS blogs (
-                    id INTEGER PRIMARY KEY,
-                    title TEXT,
-                    content TEXT,
-                    category TEXT,
-                    question TEXT
-                )
-            """)
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_title ON blogs(title)")
-            conn.commit()
-            conn.close()
-            app.logger.info(f"Initialized SQLite database at {DB_PATH}")
+            with db_lock:
+                os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else '.', exist_ok=True)
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS blogs (
+                        id INTEGER PRIMARY KEY,
+                        title TEXT,
+                        content TEXT,
+                        category TEXT,
+                        question TEXT
+                    )
+                """)
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blogs'")
+                if cursor.fetchone():
+                    app.logger.info("Table 'blogs' exists")
+                else:
+                    app.logger.error("Table 'blogs' does not exist after creation")
+                    continue
+                conn.commit()
+                conn.close()
+            if os.path.exists(DB_PATH):
+                app.logger.info(f"Database file exists at {DB_PATH}")
+            else:
+                app.logger.error(f"Database file does not exist at {DB_PATH}")
+                continue
             return True
         except sqlite3.Error as e:
             app.logger.error(f"Attempt {attempt + 1}/{max_retries} - Error initializing database: {e}")
@@ -150,16 +164,17 @@ def populate_database():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            blogs = fetch_blogs_from_supabase()
-            for blog in blogs:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO blogs (id, title, content, category, question)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (blog['id'], blog['title'], blog['content'], blog['category'], blog.get('question', '')))
-            conn.commit()
-            conn.close()
+            with db_lock:
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                blogs = fetch_blogs_from_supabase()
+                for blog in blogs:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO blogs (id, title, content, category, question)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (blog['id'], blog['title'], blog['content'], blog['category'], blog.get('question', '')))
+                conn.commit()
+                conn.close()
             app.logger.info(f"Populated SQLite with {len(blogs)} blogs.")
             return True
         except sqlite3.Error as e:
@@ -170,14 +185,15 @@ def populate_database():
 def insert_blog_to_db(blog):
     """Insert a single blog into SQLite."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO blogs (id, title, content, category, question)
-            VALUES (?, ?, ?, ?, ?)
-        """, (blog['id'], blog['title'], blog['content'], blog['category'], blog['question']))
-        conn.commit()
-        conn.close()
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO blogs (id, title, content, category, question)
+                VALUES (?, ?, ?, ?, ?)
+            """, (blog['id'], blog['title'], blog['content'], blog['category'], blog['question']))
+            conn.commit()
+            conn.close()
     except sqlite3.Error as e:
         app.logger.error(f"Error inserting blog to SQLite: {e}")
 
@@ -248,24 +264,20 @@ def humanize_content(content):
         return clean_content(content)
 
 def generate_question(content):
-    """Generate a question based on content, max 250 words."""
+    """Generate a short question based on content, max 150 characters."""
     prompt = f"""
     Based on the following blog post, generate a thought-provoking question that encourages discussion. 
-    The question should be no more than 250 words and include these links at the end:
-    - Telegram: https://t.me/TheWatchDraft
-    - Reddit: https://www.reddit.com/user/TheWatchDraft
-    - Tumblr: https://the-watch-draft.tumblr.com
-    End with: "Check out these platforms for more discussion!"
+    The question should be concise, no more than 150 characters.
 
     Blog Post:
     {content}
 
     Example:
-    "What do you think about Spider-Man surviving a zombie apocalypse? Could his webs outsmart the undead? Share your thoughts! Join the chat on Telegram: https://t.me/TheWatchDraft, Reddit: https://www.reddit.com/user/TheWatchDraft, Tumblr: https://the-watch-draft.tumblr.com. Check out these platforms for more discussion!"
+    "Can Spider-Man’s webs outsmart zombies in an apocalypse?"
     """
     data = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.9, "maxOutputTokens": 256}
+        "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.9, "maxOutputTokens": 50}
     }
     try:
         response = requests.post(GENINI_URL, headers=HEADERS, json=data, timeout=30)
@@ -277,16 +289,17 @@ def generate_question(content):
 
 def get_existing_titles():
     """Get existing titles from SQLite."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT title FROM blogs")
-        titles = {row[0] for row in cursor.fetchall()}
-        conn.close()
-        return titles
-    except sqlite3.Error as e:
-        app.logger.error(f"Error fetching titles: {e}")
-        return set()
+    with db_lock:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT title FROM blogs")
+            titles = {row[0] for row in cursor.fetchall()}
+            conn.close()
+            return titles
+        except sqlite3.Error as e:
+            app.logger.error(f"Error fetching titles: {e}")
+            return set()
 
 def generate_hashtags(topic, category):
     """Generate 10 relevant hashtags."""
@@ -335,7 +348,8 @@ def post_to_all_platforms(post, topic):
     """Post content to all platforms."""
     hashtags = " ".join(generate_hashtags(topic, post['category']))
     full_content = f"{post['title']}\n\n{post['content']}\n\n{hashtags}"
-    question_content = f"{post['question']}\n\n{hashtags}"
+    question = post['question']
+    links = "Join us on Telegram: https://t.me/TheWatchDraft, Reddit: https://www.reddit.com/user/TheWatchDraft, Tumblr: https://the-watch-draft.tumblr.com!"
 
     # Telegram
     try:
@@ -346,14 +360,15 @@ def post_to_all_platforms(post, topic):
 
     # Twitter (X)
     try:
-        twitter_client.create_tweet(text=question_content[:280])
+        tweet_text = f"{question} {links} {hashtags}"[:280]
+        twitter_client.create_tweet(text=tweet_text)
         app.logger.info(f"Posted to Twitter: {post['title']}")
     except Exception as e:
-        app.logger.error(f"Error posting to Twitter: {e}")
+        app.logger.error(f"Error posting to Twitter: {e} - Skipping")
 
     # Reddit
     try:
-        subreddit = reddit.subreddit("r/TheWatchDraft")  # Replace with your subreddit
+        subreddit = reddit.subreddit("TheWatchDraft")  # Replace with your subreddit
         subreddit.submit(title=post['title'], selftext=full_content)
         app.logger.info(f"Posted to Reddit: {post['title']}")
     except Exception as e:
@@ -368,10 +383,11 @@ def post_to_all_platforms(post, topic):
 
     # Mastodon
     try:
-        mastodon.status_post(question_content[:500])
+        mastodon_text = f"{question} {links} {hashtags}"[:500]
+        mastodon.status_post(mastodon_text)
         app.logger.info(f"Posted to Mastodon: {post['title']}")
     except Exception as e:
-        app.logger.error(f"Error posting to Mastodon: {e}")
+        app.logger.error(f"Error posting to Mastodon: {e} - Skipping")
 
 def generate_unique_post():
     """Generate unique blog post."""
