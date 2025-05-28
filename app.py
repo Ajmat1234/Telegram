@@ -97,7 +97,7 @@ mastodon = Mastodon(
 )
 
 # SQLite setup
-DB_PATH = os.path.join(os.getcwd(), "blogs.db")  # Full path for safety
+DB_PATH = os.path.join(os.getcwd(), "blogs.db")
 db_lock = threading.Lock()
 
 app.logger.info(f"Current working directory: {os.getcwd()}")
@@ -188,6 +188,10 @@ def insert_blog_to_db(blog):
         with db_lock:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blogs'")
+            if not cursor.fetchone():
+                app.logger.error("Table 'blogs' does not exist, cannot insert blog")
+                return
             cursor.execute("""
                 INSERT INTO blogs (id, title, content, category, question)
                 VALUES (?, ?, ?, ?, ?)
@@ -293,6 +297,10 @@ def get_existing_titles():
         try:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blogs'")
+            if not cursor.fetchone():
+                app.logger.error("Table 'blogs' does not exist")
+                return set()
             cursor.execute("SELECT title FROM blogs")
             titles = {row[0] for row in cursor.fetchall()}
             conn.close()
@@ -349,7 +357,7 @@ def post_to_all_platforms(post, topic):
     hashtags = " ".join(generate_hashtags(topic, post['category']))
     full_content = f"{post['title']}\n\n{post['content']}\n\n{hashtags}"
     question = post['question']
-    links = "Join us on Telegram: https://t.me/TheWatchDraft, Reddit: https://www.reddit.com/user/TheWatchDraft, Tumblr: https://the-watch-draft.tumblr.com!"
+    telegram_link = "Join us on Telegram: https://t.me/TheWatchDraft"
 
     # Telegram
     try:
@@ -360,7 +368,7 @@ def post_to_all_platforms(post, topic):
 
     # Twitter (X)
     try:
-        tweet_text = f"{question} {links} {hashtags}"[:280]
+        tweet_text = f"{question} {telegram_link}"[:280]
         twitter_client.create_tweet(text=tweet_text)
         app.logger.info(f"Posted to Twitter: {post['title']}")
     except Exception as e:
@@ -368,9 +376,9 @@ def post_to_all_platforms(post, topic):
 
     # Reddit
     try:
-        subreddit = reddit.subreddit("TheWatchDraft")  # Replace with your subreddit
+        subreddit = reddit.subreddit('u_' + REDDIT_USERNAME)
         subreddit.submit(title=post['title'], selftext=full_content)
-        app.logger.info(f"Posted to Reddit: {post['title']}")
+        app.logger.info(f"Posted to Reddit profile: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Reddit: {e}")
 
@@ -383,7 +391,7 @@ def post_to_all_platforms(post, topic):
 
     # Mastodon
     try:
-        mastodon_text = f"{question} {links} {hashtags}"[:500]
+        mastodon_text = f"{question} {telegram_link}"[:500]
         mastodon.status_post(mastodon_text)
         app.logger.info(f"Posted to Mastodon: {post['title']}")
     except Exception as e:
@@ -479,7 +487,8 @@ if __name__ == '__main__':
         app.logger.error("Database initialization failed")
         raise RuntimeError("Database initialization failed")
     if not populate_database():
-        app.logger.info("Populating database from Supabase")
+        app.logger.error("Failed to populate database from Supabase")
+        raise RuntimeError("Failed to populate database")
     threading.Thread(target=keep_alive, daemon=True).start()
     threading.Thread(target=run_scheduler, daemon=True).start()
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
