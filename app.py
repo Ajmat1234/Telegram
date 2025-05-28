@@ -14,6 +14,10 @@ import schedule
 import re
 import random
 import telebot
+import tweepy
+import praw
+import pytumblr
+from mastodon import Mastodon
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -48,8 +52,55 @@ HEADERS = {"Content-Type": "application/json"}
 # Telegram Bot setup
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")
-
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+
+# Twitter (X) setup
+TWITTER_API_KEY = os.getenv("TWITTER_API_KEY")
+TWITTER_API_SECRET = os.getenv("TWITTER_API_SECRET")
+TWITTER_ACCESS_TOKEN = os.getenv("TWITTER_ACCESS_TOKEN")
+TWITTER_ACCESS_TOKEN_SECRET = os.getenv("TWITTER_ACCESS_TOKEN_SECRET")
+TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
+twitter_client = tweepy.Client(
+    bearer_token=TWITTER_BEARER_TOKEN,
+    consumer_key=TWITTER_API_KEY,
+    consumer_secret=TWITTER_API_SECRET,
+    access_token=TWITTER_ACCESS_TOKEN,
+    access_token_secret=TWITTER_ACCESS_TOKEN_SECRET
+)
+
+# Reddit setup
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
+REDDIT_USERNAME = os.getenv("REDDIT_USERNAME")
+REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD")
+REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT")
+reddit = praw.Reddit(
+    client_id=REDDIT_CLIENT_ID,
+    client_secret=REDDIT_CLIENT_SECRET,
+    username=REDDIT_USERNAME,
+    password=REDDIT_PASSWORD,
+    user_agent=REDDIT_USER_AGENT
+)
+
+# Tumblr setup
+TUMBLR_CONSUMER_KEY = os.getenv("TUMBLR_CONSUMER_KEY")
+TUMBLR_CONSUMER_SECRET = os.getenv("TUMBLR_CONSUMER_SECRET")
+TUMBLR_ACCESS_TOKEN = os.getenv("TUMBLR_ACCESS_TOKEN")
+TUMBLR_ACCESS_TOKEN_SECRET = os.getenv("TUMBLR_ACCESS_TOKEN_SECRET")
+tumblr = pytumblr.TumblrRestClient(
+    TUMBLR_CONSUMER_KEY,
+    TUMBLR_CONSUMER_SECRET,
+    TUMBLR_ACCESS_TOKEN,
+    TUMBLR_ACCESS_TOKEN_SECRET
+)
+
+# Mastodon setup
+MASTODON_ACCESS_TOKEN = os.getenv("MASTODON_ACCESS_TOKEN")
+MASTODON_API_BASE_URL = os.getenv("MASTODON_API_BASE_URL")
+mastodon = Mastodon(
+    access_token=MASTODON_ACCESS_TOKEN,
+    api_base_url=MASTODON_API_BASE_URL
+)
 
 # SQLite setup
 DB_PATH = "blogs.db"
@@ -306,17 +357,52 @@ def generate_post_with_gemini(topic, category):
         app.logger.error(f"Gemini network error: {e}")
         return None
 
-def post_to_telegram(post, topic):
-    """Post content to Telegram channel with hashtags."""
+def post_to_all_platforms(post, topic):
+    """Post content to Telegram, Twitter, Reddit, Tumblr, and Mastodon."""
+    hashtags = " ".join(generate_hashtags(topic, post['category']))
+    # Short content for platforms with strict length limits
+    short_content = f"{post['title']}\n\n{post['content'][:1000]}...\n\n{hashtags}"
+    full_content = f"{post['title']}\n\n{post['content']}\n\n{hashtags}"
+
+    # Telegram
     try:
-        hashtags = " ".join(generate_hashtags(topic, post['category']))
-        message = f"{post['title']}\n\n{post['content']}\n\n{hashtags}"
-        if len(message) > 4096:
-            message = f"{post['title']}\n\n{post['content'][:1000]}...\n\n{hashtags}"
-        bot.send_message(TELEGRAM_CHANNEL, message)
+        if len(full_content) > 4096:
+            bot.send_message(TELEGRAM_CHANNEL, short_content)
+        else:
+            bot.send_message(TELEGRAM_CHANNEL, full_content)
         app.logger.info(f"Posted to Telegram: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Telegram: {e}")
+
+    # Twitter (X)
+    try:
+        tweet_content = f"{post['title']}\n{post['content'][:200]}...\n{hashtags}"[:280]
+        twitter_client.create_tweet(text=tweet_content)
+        app.logger.info(f"Posted to Twitter: {post['title']}")
+    except Exception as e:
+        app.logger.error(f"Error posting to Twitter: {e}")
+
+    # Reddit
+    try:
+        subreddit = reddit.subreddit("your_subreddit_name")  # Replace with your subreddit
+        reddit.submission(title=post['title'], selftext=full_content)
+        app.logger.info(f"Posted to Reddit: {post['title']}")
+    except Exception as e:
+        app.logger.error(f"Error posting to Reddit: {e}")
+
+    # Tumblr
+    try:
+        tumblr.create_text("your-blog-name", state="published", title=post['title'], body=full_content, tags=generate_hashtags(topic, post['category']))
+        app.logger.info(f"Posted to Tumblr: {post['title']}")
+    except Exception as e:
+        app.logger.error(f"Error posting to Tumblr: {e}")
+
+    # Mastodon
+    try:
+        mastodon.status_post(full_content[:500])  # Mastodon has a 500-character limit
+        app.logger.info(f"Posted to Mastodon: {post['title']}")
+    except Exception as e:
+        app.logger.error(f"Error posting to Mastodon: {e}")
 
 def generate_unique_post():
     """Generate unique blog post with category rotation."""
@@ -363,7 +449,7 @@ def generate_unique_post():
         USED_TOPICS.add(topic)
         USED_CONTENTS.add(cleaned_content)
         LAST_CATEGORY = category
-        post_to_telegram(inserted_post, topic)
+        post_to_all_platforms(inserted_post, topic)
         app.logger.info(f"Generated post: {title} with category: {category}")
         return new_post
     except Exception as e:
