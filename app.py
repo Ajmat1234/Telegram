@@ -36,16 +36,10 @@ app.logger.addHandler(stream_handler)
 # Supabase setup
 SUPABASE_URL = "https://wxsdvjohphpwdxbeioki.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind4c2R2am9ocGhwd2R4YmVpb2tpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgzNDIxODksImV4cCI6MjA2MzkxODE4OX0.89p7DcWynu-96wfOagF_DE5Hbsff_cVc34JHMcd95J0"
-if not SUPABASE_URL or not SUPABASE_KEY:
-    app.logger.error("SUPABASE_URL and SUPABASE_KEY must be set.")
-    raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set.")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Gemini API setup
 GEMINI_API_KEY = "AIzaSyALVGk-yBmkohV6Wqei63NARTd9xD-O7TI"
-if not GEMINI_API_KEY:
-    app.logger.error("GEMINI_API_KEY must be set.")
-    raise ValueError("GEMINI_API_KEY must be set.")
 GENINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 HEADERS = {"Content-Type": "application/json"}
 
@@ -118,11 +112,11 @@ def initialize_database():
                     id INTEGER PRIMARY KEY,
                     title TEXT,
                     content TEXT,
-                    category TEXT
+                    category TEXT,
+                    question TEXT
                 )
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_title ON blogs(title)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content ON blogs(content)")
             conn.commit()
             conn.close()
             app.logger.info(f"Initialized SQLite database at {DB_PATH}")
@@ -133,23 +127,6 @@ def initialize_database():
     app.logger.error("Failed to initialize database after retries.")
     return False
 
-def check_database():
-    """Check if SQLite database is valid."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='blogs'")
-        if not cursor.fetchone():
-            app.logger.error("Table 'blogs' does not exist.")
-            return False
-        cursor.execute("SELECT 1 FROM blogs LIMIT 1")
-        conn.close()
-        app.logger.info("Database check passed.")
-        return True
-    except sqlite3.Error as e:
-        app.logger.error(f"Database check failed: {e}")
-        return False
-
 def fetch_blogs_from_supabase():
     """Fetch all blogs from Supabase with pagination."""
     blogs = []
@@ -157,10 +134,9 @@ def fetch_blogs_from_supabase():
     offset = 0
     while True:
         try:
-            response = supabase.table('tables').select('id, title, content, category').range(offset, offset + page_size - 1).execute()
+            response = supabase.table('tables').select('id, title, content, category, question').range(offset, offset + page_size - 1).execute()
             fetched_blogs = response.data or []
             blogs.extend(fetched_blogs)
-            app.logger.info(f"Fetched {len(fetched_blogs)} blogs from Supabase, total: {len(blogs)}")
             if len(fetched_blogs) < page_size:
                 break
             offset += page_size
@@ -179,9 +155,9 @@ def populate_database():
             blogs = fetch_blogs_from_supabase()
             for blog in blogs:
                 cursor.execute("""
-                    INSERT OR IGNORE INTO blogs (id, title, content, category)
-                    VALUES (?, ?, ?, ?)
-                """, (blog['id'], blog['title'], blog['content'], blog['category']))
+                    INSERT OR IGNORE INTO blogs (id, title, content, category, question)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (blog['id'], blog['title'], blog['content'], blog['category'], blog.get('question', '')))
             conn.commit()
             conn.close()
             app.logger.info(f"Populated SQLite with {len(blogs)} blogs.")
@@ -189,7 +165,6 @@ def populate_database():
         except sqlite3.Error as e:
             app.logger.error(f"Attempt {attempt + 1}/{max_retries} - Error populating database: {e}")
             time.sleep(1)
-    app.logger.error("Failed to populate database after retries.")
     return False
 
 def insert_blog_to_db(blog):
@@ -198,17 +173,15 @@ def insert_blog_to_db(blog):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO blogs (id, title, content, category)
-            VALUES (?, ?, ?, ?)
-        """, (blog['id'], blog['title'], blog['content'], blog['category']))
+            INSERT INTO blogs (id, title, content, category, question)
+            VALUES (?, ?, ?, ?, ?)
+        """, (blog['id'], blog['title'], blog['content'], blog['category'], blog['question']))
         conn.commit()
         conn.close()
-        app.logger.info(f"Inserted blog into SQLite: {blog['title']}")
     except sqlite3.Error as e:
         app.logger.error(f"Error inserting blog to SQLite: {e}")
 
-# New unique topics generator
-def generate_unique_topic():
+def generate_unique_topic(existing_titles):
     """Generate unique topics dynamically."""
     movies = [
         "Interstellar: What If We Never Left Earth?", "Blade Runner 2049: Are Replicants Human?",
@@ -226,16 +199,14 @@ def generate_unique_topic():
         "Journey to the Center of the Earth: Is It Possible?"
     ]
     categories = {"Movie": movies, "Anime": anime, "Adventure": adventures}
-    category = random.choice(list(categories.keys()))
-    topic = random.choice(categories[category])
-    return {"topic": topic, "category": category}
-
-USED_TOPICS = set()
-USED_CONTENTS = set()
-LAST_CATEGORY = None
+    while True:
+        category = random.choice(list(categories.keys()))
+        topic = random.choice(categories[category])
+        if topic not in existing_titles:
+            return {"topic": topic, "category": category}
 
 def clean_content(content):
-    """Remove markdown symbols from content to ensure plain text."""
+    """Remove markdown symbols from content."""
     if not content:
         return content
     content = re.sub(r'\*\*([^*]+)\*\*', r'\1', content)
@@ -247,67 +218,78 @@ def clean_content(content):
     content = re.sub(r'`([^`]+)`', r'\1', content)
     content = re.sub(r'^\s*[-*+]\s+', '', content, flags=re.MULTILINE)
     content = re.sub(r'\n\s*\n+', '\n\n', content)
-    return content.strip()[:1500]  # Reduced length for shorter posts
+    return content.strip()[:1500]
 
 def humanize_content(content):
-    """Humanize content using Gemini API with a fun, humorous tone."""
+    """Humanize content using Gemini API."""
     prompt = f"""
     Turn the content below into a fun, engaging blog post for a 2025 audience.
     - Write in English only, with a conversational, female writer vibe.
     - Keep it short (500-800 words, max 1500 characters).
-    - Start with a humorous or relatable hook (like a funny scenario or witty question).
-    - Add humor and playful tone (e.g., sarcastic remarks, pop culture references).
+    - Start with a humorous or relatable hook.
+    - Add humor and playful tone.
     - Reference credible sources (e.g., "A 2025 Pop Culture Institute study says...").
     - End with an engaging question to spark discussion.
-    - Use simple, SEO-friendly language with a logical flow.
+    - Use simple, SEO-friendly language.
     - Output plain text, no markdown symbols.
 
     Original Content:
     {content}
     """
-    max_retries = 2
-    for attempt in range(max_retries):
-        try:
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.9, "topK": 40, "topP": 0.95, "maxOutputTokens": 1024}
-            }
-            response = requests.post(GENINI_URL, headers=HEADERS, json=payload, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            humanized_content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            cleaned_content = clean_content(humanized_content)
-            app.logger.info("Content humanized and cleaned successfully with Gemini.")
-            return cleaned_content
-        except Exception as e:
-            app.logger.error(f"Attempt {attempt + 1}/{max_retries} - Failed to humanize content with Gemini: {e}")
-            time.sleep(1)
-    app.logger.error("Failed to humanize content with Gemini.")
-    return clean_content(content)
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.9, "topK": 40, "topP": 0.95, "maxOutputTokens": 1024}
+    }
+    try:
+        response = requests.post(GENINI_URL, headers=HEADERS, json=payload, timeout=30)
+        return clean_content(response.json()["candidates"][0]["content"]["parts"][0]["text"].strip())
+    except Exception as e:
+        app.logger.error(f"Failed to humanize content: {e}")
+        return clean_content(content)
 
-def get_existing_data():
-    """Get existing titles and contents from SQLite."""
+def generate_question(content):
+    """Generate a question based on content, max 250 words."""
+    prompt = f"""
+    Based on the following blog post, generate a thought-provoking question that encourages discussion. 
+    The question should be no more than 250 words and include these links at the end:
+    - Telegram: https://t.me/TheWatchDraft
+    - Reddit: https://www.reddit.com/user/TheWatchDraft
+    - Tumblr: https://the-watch-draft.tumblr.com
+    End with: "Check out these platforms for more discussion!"
+
+    Blog Post:
+    {content}
+
+    Example:
+    "What do you think about Spider-Man surviving a zombie apocalypse? Could his webs outsmart the undead? Share your thoughts! Join the chat on Telegram: https://t.me/TheWatchDraft, Reddit: https://www.reddit.com/user/TheWatchDraft, Tumblr: https://the-watch-draft.tumblr.com. Check out these platforms for more discussion!"
+    """
+    data = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.7, "topK": 40, "topP": 0.9, "maxOutputTokens": 256}
+    }
+    try:
+        response = requests.post(GENINI_URL, headers=HEADERS, json=data, timeout=30)
+        question = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return question if question else None
+    except Exception as e:
+        app.logger.error(f"Error generating question: {e}")
+        return None
+
+def get_existing_titles():
+    """Get existing titles from SQLite."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT title, content FROM blogs")
-        rows = cursor.fetchall()
+        cursor.execute("SELECT title FROM blogs")
+        titles = {row[0] for row in cursor.fetchall()}
         conn.close()
-        return {
-            'titles': {row[0] for row in rows},
-            'contents': {row[1] for row in rows}
-        }
+        return titles
     except sqlite3.Error as e:
-        app.logger.error(f"Error fetching existing data: {e}")
-        if "no such table" in str(e).lower():
-            app.logger.info("Attempting to initialize database due to missing table.")
-            if initialize_database():
-                app.logger.info("Database initialized successfully.")
-                return {'titles': set(), 'contents': set()}
-        return {'titles': set(), 'contents': set()}
+        app.logger.error(f"Error fetching titles: {e}")
+        return set()
 
 def generate_hashtags(topic, category):
-    """Generate 10 relevant hashtags for the topic."""
+    """Generate 10 relevant hashtags."""
     base_tags = {
         "Anime": ["#AnimeVibes", "#AnimeFans", "#AnimeWorld", "#AnimeLife", "#AnimeLovers"],
         "Movie": ["#MovieNight", "#FilmFans", "#CinemaLovers", "#MovieMagic", "#Blockbuster"],
@@ -320,23 +302,22 @@ def generate_hashtags(topic, category):
     return all_tags[:10]
 
 def generate_post_with_gemini(topic, category):
-    """Generate blog post using Gemini API with humor and theories."""
-    app.logger.debug(f"Generating post for topic: {topic} with Gemini")
+    """Generate blog post using Gemini API."""
     prompt = f"""
-    You're a witty content creator writing for a 2025 global audience.
+    You're a witty content creator for a 2025 audience.
     Create a blog post on: "{topic}".
-    - Write a catchy, SEO-friendly title (10-12 words, fun and engaging).
+    - Write a catchy, SEO-friendly title (10-12 words).
     - Keep it short (500-800 words, max 1500 characters).
-    - Start with a funny or relatable hook (e.g., a quirky scenario or sarcastic question).
-    - Use a playful, female writer tone with humor (sarcastic remarks, pop culture references).
-    - Include a fan theory or hypothetical scenario to make it unique.
+    - Start with a funny or relatable hook.
+    - Use a playful, female writer tone with humor.
+    - Include a fan theory or hypothetical scenario.
     - Mention credible sources (e.g., "A 2025 Pop Culture Institute study says...").
-    - End with an engaging question for the audience.
-    - Write in English only, no markdown symbols, simple and SEO-friendly.
+    - End with an engaging question.
+    - Write in English only, no markdown symbols.
 
     Example:
     Title: Could Spider-Man Survive a Zombie Apocalypse?
-    Okay, picture this: Spider-Man swinging through a zombie-infested New York, web-slinging brains instead of bad guys. Sounds like a wild ride, right? ... [Continue with humor, theories, and a question]
+    Okay, picture this: Spider-Man swinging through a zombie-infested New York, web-slinging brains instead of bad guys. ...
     """
     data = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -344,95 +325,73 @@ def generate_post_with_gemini(topic, category):
     }
     try:
         response = requests.post(GENINI_URL, headers=HEADERS, json=data, timeout=30)
-        if response.status_code == 200:
-            content = response.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-            if content:
-                app.logger.info(f"Generated content for topic: {topic} with Gemini")
-                return content
-            app.logger.warning(f"Empty content for topic: {topic}")
-        else:
-            app.logger.error(f"Gemini error: {response.status_code}")
-        return None
-    except requests.RequestException as e:
-        app.logger.error(f"Gemini network error: {e}")
+        content = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return content if content else None
+    except Exception as e:
+        app.logger.error(f"Gemini error: {e}")
         return None
 
 def post_to_all_platforms(post, topic):
-    """Post content to Telegram, Twitter, Reddit, Tumblr, and Mastodon."""
+    """Post content to all platforms."""
     hashtags = " ".join(generate_hashtags(topic, post['category']))
-    # Short content for platforms with strict length limits
-    short_content = f"{post['title']}\n\n{post['content'][:1000]}...\n\n{hashtags}"
     full_content = f"{post['title']}\n\n{post['content']}\n\n{hashtags}"
+    question_content = f"{post['question']}\n\n{hashtags}"
 
     # Telegram
     try:
-        if len(full_content) > 4096:
-            bot.send_message(TELEGRAM_CHANNEL, short_content)
-        else:
-            bot.send_message(TELEGRAM_CHANNEL, full_content)
+        bot.send_message(TELEGRAM_CHANNEL, full_content[:4096])
         app.logger.info(f"Posted to Telegram: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Telegram: {e}")
 
     # Twitter (X)
     try:
-        tweet_content = f"{post['title']}\n{post['content'][:200]}...\n{hashtags}"[:280]
-        twitter_client.create_tweet(text=tweet_content)
+        twitter_client.create_tweet(text=question_content[:280])
         app.logger.info(f"Posted to Twitter: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Twitter: {e}")
 
     # Reddit
     try:
-        subreddit = reddit.subreddit("your_subreddit_name")  # Replace with your subreddit
-        reddit.submission(title=post['title'], selftext=full_content)
+        subreddit = reddit.subreddit("r/TheWatchDraft")  # Replace with your subreddit
+        subreddit.submit(title=post['title'], selftext=full_content)
         app.logger.info(f"Posted to Reddit: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Reddit: {e}")
 
     # Tumblr
     try:
-        tumblr.create_text("your-blog-name", state="published", title=post['title'], body=full_content, tags=generate_hashtags(topic, post['category']))
+        tumblr.create_text("the-watch-draft", state="published", title=post['title'], body=full_content, tags=generate_hashtags(topic, post['category']))
         app.logger.info(f"Posted to Tumblr: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Tumblr: {e}")
 
     # Mastodon
     try:
-        mastodon.status_post(full_content[:500])  # Mastodon has a 500-character limit
+        mastodon.status_post(question_content[:500])
         app.logger.info(f"Posted to Mastodon: {post['title']}")
     except Exception as e:
         app.logger.error(f"Error posting to Mastodon: {e}")
 
 def generate_unique_post():
-    """Generate unique blog post with category rotation."""
+    """Generate unique blog post."""
     try:
-        existing_data = get_existing_data()
-        existing_titles = existing_data['titles']
-        existing_contents = existing_data['contents']
-        global USED_TOPICS, USED_CONTENTS, LAST_CATEGORY
-        if not USED_TOPICS:
-            USED_TOPICS = existing_titles
-        if not USED_CONTENTS:
-            USED_CONTENTS = existing_contents
-        topic_data = generate_unique_topic()
+        existing_titles = get_existing_titles()
+        topic_data = generate_unique_topic(existing_titles)
         topic = topic_data["topic"]
         category = topic_data["category"]
-        while topic in USED_TOPICS or category == LAST_CATEGORY:
-            topic_data = generate_unique_topic()
-            topic = topic_data["topic"]
-            category = topic_data["category"]
         content = generate_post_with_gemini(topic, category)
-        if not content or content in USED_CONTENTS or content in existing_contents:
-            app.logger.warning(f"Content for topic {topic} is duplicate or empty, skipping.")
+        if not content:
+            app.logger.warning(f"Failed to generate content for: {topic}")
             return None
-        humanized_content = humanize_content(content)
-        cleaned_content = clean_content(humanized_content)
+        cleaned_content = clean_content(humanize_content(content))
         if not cleaned_content:
-            app.logger.warning(f"Failed to generate valid content for topic: {topic}")
             return None
-        lines = cleaned_content.split('\n')
-        title = next((line.replace("Title: ", "").strip() for line in lines if line.startswith("Title: ")), topic[:50])
+        question = generate_question(cleaned_content)
+        if not question:
+            app.logger.warning(f"Failed to generate question for: {topic}")
+            return None
+        title = next((line.replace("Title: ", "").strip() for line in cleaned_content.split('\n') if line.startswith("Title: ")), topic[:50])
         i = 1
         original_title = title
         while title in existing_titles:
@@ -441,19 +400,17 @@ def generate_unique_post():
         new_post = {
             "title": title,
             "content": cleaned_content,
-            "category": category
+            "category": category,
+            "question": question
         }
         response = supabase.table('tables').insert(new_post).execute()
         inserted_post = response.data[0]
         insert_blog_to_db(inserted_post)
-        USED_TOPICS.add(topic)
-        USED_CONTENTS.add(cleaned_content)
-        LAST_CATEGORY = category
         post_to_all_platforms(inserted_post, topic)
-        app.logger.info(f"Generated post: {title} with category: {category}")
+        app.logger.info(f"Generated post: {title}")
         return new_post
     except Exception as e:
-        app.logger.error(f"generate_unique_post error: {str(e)}")
+        app.logger.error(f"Error in generate_unique_post: {e}")
         return None
 
 def auto_generate_and_upload():
@@ -463,31 +420,27 @@ def auto_generate_and_upload():
         app.logger.info(f"Generated post: {post['title']}")
 
 def keep_alive():
-    """Keep server alive with improved logging."""
+    """Keep server alive."""
     while True:
         try:
-            url = "https://telegram-yvmd.onrender.com/ping"
-            app.logger.debug(f"Sending keep-alive ping to {url}")
-            response = requests.get(url, timeout=10)
-            app.logger.info(f"Keep-alive ping, status: {response.status_code}")
+            requests.get("https://telegram-yvmd.onrender.com/ping", timeout=10)
+            app.logger.info("Keep-alive ping successful")
         except Exception as e:
-            app.logger.error(f"keep_alive error: {e}")
-        time.sleep(300)  # 5 minutes
+            app.logger.error(f"Keep-alive error: {e}")
+        time.sleep(300)
 
 @app.route('/ping')
 def ping():
-    """Handle keep-alive pings."""
-    app.logger.info("Received ping request.")
     return jsonify({"status": "alive"}), 200
 
 @app.route('/generate', methods=['GET', 'POST'])
 def manual_generate():
     try:
         post = generate_unique_post()
-        return jsonify({"message": "Post generated" if post else "Failed to generate post", "post": post}), 200 if post else 500
+        return jsonify({"message": "Post generated" if post else "Failed", "post": post}), 200 if post else 500
     except Exception as e:
         app.logger.error(f"Error in /generate: {e}")
-        return jsonify({"message": "Error generating post", "error": str(e)}), 500
+        return jsonify({"message": "Error", "error": str(e)}), 500
 
 @app.route('/logs')
 def view_logs():
@@ -507,13 +460,10 @@ def run_scheduler():
 if __name__ == '__main__':
     app.logger.info("Starting application...")
     if not initialize_database():
-        app.logger.error("Failed to initialize database on startup.")
+        app.logger.error("Database initialization failed")
         raise RuntimeError("Database initialization failed")
-    if not check_database():
-        app.logger.info("Database invalid, populating from Supabase.")
-        if not populate_database():
-            app.logger.error("Failed to populate database on startup.")
-            raise RuntimeError("Database population failed")
+    if not populate_database():
+        app.logger.info("Populating database from Supabase")
     threading.Thread(target=keep_alive, daemon=True).start()
     threading.Thread(target=run_scheduler, daemon=True).start()
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
